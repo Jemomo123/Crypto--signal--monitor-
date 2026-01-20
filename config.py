@@ -1,24 +1,24 @@
 # config.py
-# Exchange and market configuration
 
+# Exchanges supported by ccxt
 EXCHANGE_IDS = [
     "mexc",
     "gateio"
 ]
 
+# Symbols to scan
 SYMBOLS = [
-    "PEPE/USDT",
-    "WIF/USDT",
-    "BONK/USDT",
-    "FLOKI/USDT"
+    "BTC/USDT",
+    "ETH/USDT",
+    "SOL/USDT"
 ]
 
+# Timeframes to scan
 TIMEFRAMES = [
-    "3m",
     "5m",
     "15m",
-    "1h",
-    "4h"
+    "1h"
 ]
 
+# Refresh interval for Streamlit (seconds)
 REFRESH_SECONDS = 60
