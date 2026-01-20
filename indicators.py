@@ -1,36 +1,12 @@
-import numpy as np
+import ta
 
-def sma(values, period):
-    if len(values) < period:
-        return None
-    return np.mean(values[-period:])
 
-def add_indicators(ohlcv):
-    """
-    ohlcv format:
-    [timestamp, open, high, low, close, volume]
-    """
+def add_indicators(df):
+    df["rsi"] = ta.momentum.RSIIndicator(df["close"]).rsi()
 
-    if len(ohlcv) < 120:
-        return None
+    macd = ta.trend.MACD(df["close"])
+    df["macd"] = macd.macd()
+    df["macd_signal"] = macd.macd_signal()
 
-    closes = [c[4] for c in ohlcv]
-
-    sma20 = sma(closes, 20)
-    sma100 = sma(closes, 100)
-
-    if sma20 is None or sma100 is None:
-        return None
-
-    # Direction
-    trend = "Bullish" if sma20 > sma100 else "Bearish"
-
-    # Squeeze logic (SMA compression)
-    squeeze = abs(sma20 - sma100) / sma100 < 0.002  # 0.2%
-
-    return {
-        "sma20": round(sma20, 6),
-        "sma100": round(sma100, 6),
-        "trend": trend,
-        "squeeze": squeeze
-    }
+    return df
+``
