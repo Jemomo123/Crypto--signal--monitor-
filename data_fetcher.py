@@ -1,29 +1,21 @@
 import ccxt
-import pandas as pd
+import time
 
-# Initialize exchange (MEXC)
-exchange = ccxt.mexc({
-    "enableRateLimit": True,
-})
+exchanges = {
+    "mexc": ccxt.mexc(),
+    "gate": ccxt.gate()
+}
 
-def fetch_ohlcv(symbol: str, timeframe: str, limit: int = 200) -> pd.DataFrame:
-    """
-    Fetch OHLCV data for a symbol and timeframe.
-    Returns a pandas DataFrame.
-    """
+def fetch_ohlcv(exchange_name, symbol, timeframe, limit=200):
+    exchange = exchanges.get(exchange_name)
+
+    if not exchange:
+        return []
+
     try:
-        ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
-
-        df = pd.DataFrame(
-            ohlcv,
-            columns=["timestamp", "open", "high", "low", "close", "volume"]
-        )
-
-        # Convert timestamp to readable time (optional, useful later)
-        df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
-
-        return df
-
+        exchange.load_markets()
+        data = exchange.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
+        time.sleep(exchange.rateLimit / 1000)
+        return data
     except Exception as e:
-        print(f"Error fetching {symbol} {timeframe}: {e}")
-        return pd.DataFrame()
+        return []
