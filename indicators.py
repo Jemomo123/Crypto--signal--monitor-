@@ -11,6 +11,9 @@ def add_indicators(ohlcv):
     [timestamp, open, high, low, close, volume]
     """
 
+    if len(ohlcv) < 120:
+        return None
+
     closes = [c[4] for c in ohlcv]
 
     sma20 = sma(closes, 20)
@@ -19,4 +22,15 @@ def add_indicators(ohlcv):
     if sma20 is None or sma100 is None:
         return None
 
+    # Direction
+    trend = "Bullish" if sma20 > sma100 else "Bearish"
+
+    # Squeeze logic (SMA compression)
     squeeze = abs(sma20 - sma100) / sma100 < 0.002  # 0.2%
+
+    return {
+        "sma20": round(sma20, 6),
+        "sma100": round(sma100, 6),
+        "trend": trend,
+        "squeeze": squeeze
+    }
