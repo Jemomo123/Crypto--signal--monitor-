@@ -1,29 +1,22 @@
-import ta
-import pandas as pd
-from config import SMA_FAST, SMA_SLOW, ATR_PERIOD, SQUEEZE_THRESHOLD
+import numpy as np
 
-def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
+def sma(values, period):
+    if len(values) < period:
+        return None
+    return np.mean(values[-period:])
+
+def add_indicators(ohlcv):
     """
-    Adds technical indicators to OHLCV dataframe.
+    ohlcv format:
+    [timestamp, open, high, low, close, volume]
     """
 
-    if df.empty:
-        return df
+    closes = [c[4] for c in ohlcv]
 
-    # Moving averages
-    df["sma_fast"] = ta.trend.sma_indicator(df["close"], SMA_FAST)
-    df["sma_slow"] = ta.trend.sma_indicator(df["close"], SMA_SLOW)
+    sma20 = sma(closes, 20)
+    sma100 = sma(closes, 100)
 
-    # SMA squeeze (how close they are)
-    df["sma_distance"] = abs(df["sma_fast"] - df["sma_slow"]) / df["close"]
-    df["sma_squeeze"] = df["sma_distance"] < SQUEEZE_THRESHOLD
+    if sma20 is None or sma100 is None:
+        return None
 
-    # RSI (momentum)
-    df["rsi"] = ta.momentum.rsi(df["close"], window=14)
-
-    # ATR (volatility, stops later)
-    df["atr"] = ta.volatility.average_true_range(
-        df["high"], df["low"], df["close"], window=ATR_PERIOD
-    )
-
-    return df
+    squeeze = abs(sma20 - sma100) / sma100 < 0.002  # 0.2%
