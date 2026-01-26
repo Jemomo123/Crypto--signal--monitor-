@@ -1,161 +1,178 @@
 import pandas as pd
+from data_fetcher import fetch_ohlcv
 from indicators import add_indicators
-from config import (
-    RSI_BULL_MIN,
-    RSI_BEAR_MAX,
-    SMA_FAST,
-    SMA_SLOW,
-    HIGHER_TIMEFRAME
-)
+from config import SYMBOLS, TIMEFRAMES
 
 
-# -----------------------------
+# -------------------------
 # Candle classification
-# -----------------------------
-def candle_type(row):
+# -------------------------
+
+def classify_candle(row):
     body = abs(row["close"] - row["open"])
     range_ = row["high"] - row["low"]
 
     if range_ == 0:
-        return "neutral"
+        return "none"
 
     body_ratio = body / range_
 
-    if body_ratio > 0.6:
+    if body_ratio > 0.7:
         return "elephant"
-    elif body_ratio < 0.25:
+    elif body_ratio < 0.3:
         return "tail"
     else:
         return "normal"
 
 
-# -----------------------------
-# Detect SMA squeeze
-# -----------------------------
-def is_squeeze(df, lookback=5):
-    spread = (df["sma_20"] - df["sma_100"]).abs()
-    recent = spread.tail(lookback)
+# -------------------------
+# SQZ detection
+# -------------------------
 
-    return recent.max() < spread.mean()
+def is_squeeze(df):
+    last = df.iloc[-1]
+    distance = abs(last["sma_20"] - last["sma_100"])
+    return distance / last["close"] < 0.0015
 
 
-# -----------------------------
-# Detect expansion WITHOUT crossover
-# -----------------------------
-def expansion_without_cross(df):
+# -------------------------
+# Expansion detection
+# -------------------------
+
+def expansion_direction(df):
     last = df.iloc[-1]
     prev = df.iloc[-2]
 
-    moving_up = last["close"] > prev["close"] and last["sma_20"] > prev["sma_20"]
-    moving_down = last["close"] < prev["close"] and last["sma_20"] < prev["sma_20"]
-
-    no_cross = (
-        (prev["sma_20"] > prev["sma_100"] and last["sma_20"] > last["sma_100"]) or
-        (prev["sma_20"] < prev["sma_100"] and last["sma_20"] < last["sma_100"])
-    )
-
-    return (moving_up or moving_down) and no_cross
-
-
-# -----------------------------
-# Detect SMA crossover expansion
-# -----------------------------
-def crossover_expansion(df):
-    prev = df.iloc[-2]
-    last = df.iloc[-1]
-
-    bullish_cross = prev["sma_20"] < prev["sma_100"] and last["sma_20"] > last["sma_100"]
-    bearish_cross = prev["sma_20"] > prev["sma_100"] and last["sma_20"] < last["sma_100"]
-
-    return bullish_cross or bearish_cross
-
-
-# -----------------------------
-# Higher timeframe bias (15m)
-# -----------------------------
-def higher_tf_bias(htf_df):
-    htf_df = add_indicators(htf_df)
-
-    last = htf_df.iloc[-1]
-
-    if last["sma_20"] > last["sma_100"] and last["rsi"] > 50:
+    if last["close"] > prev["close"] and last["close"] > last["sma_20"]:
         return "bullish"
-    elif last["sma_20"] < last["sma_100"] and last["rsi"] < 50:
+    if last["close"] < prev["close"] and last["close"] < last["sma_20"]:
         return "bearish"
-    else:
-        return "neutral"
+
+    return None
 
 
-# -----------------------------
-# MAIN SCANNER
-# -----------------------------
-def scan_markets(df, higher_tf_df):
-    df = add_indicators(df)
+# -------------------------
+# SMA crossover detection
+# -------------------------
 
+def sma_crossover(df):
+    prev = df.iloc[-2]
     last = df.iloc[-1]
 
-    direction = None
-    setup = None
-    conviction = "WAIT"
-    reason = []
+    if prev["sma_20"] < prev["sma_100"] and last["sma_20"] > last["sma_100"]:
+        return "bullish"
+    if prev["sma_20"] > prev["sma_100"] and last["sma_20"] < last["sma_100"]:
+        return "bearish"
 
-    # Candle confirmation
-    candle = candle_type(last)
+    return None
 
-    # RSI positioning
-    rsi_bull_ok = last["rsi"] >= RSI_BULL_MIN
-    rsi_bear_ok = last["rsi"] <= RSI_BEAR_MAX
 
-    # Higher timeframe bias
-    htf_bias = higher_tf_bias(higher_tf_df)
+# -------------------------
+# Higher timeframe bias
+# -------------------------
 
-    # -------- SQZ EXPANSION --------
-    if is_squeeze(df) and expansion_without_cross(df):
-        setup = "SQZ Expansion"
+def higher_tf_bias(symbol):
+    df_htf = fetch_ohlcv(symbol, "15m", limit=120)
+    df_htf = add_indicators(df_htf)
 
-        if last["close"] > last["sma_20"]:
-            direction = "LONG"
-        else:
-            direction = "SHORT"
+    last = df_htf.iloc[-1]
 
-    # -------- CROSSOVER EXPANSION --------
-    elif crossover_expansion(df):
-        setup = "SMA Crossover Expansion"
+    if last["close"] > last["sma_20"] > last["sma_100"]:
+        return "bullish"
+    if last["close"] < last["sma_20"] < last["sma_100"]:
+        return "bearish"
 
-        if last["sma_20"] > last["sma_100"]:
-            direction = "LONG"
-        else:
-            direction = "SHORT"
+    return "neutral"
 
-    else:
-        return None
 
-    # -------- CONFIRMATIONS --------
-    if direction == "LONG":
-        if not rsi_bull_ok:
-            return None
-        if htf_bias != "bullish":
-            conviction = "B"
-            reason.append("Lower TF long but 15m not aligned")
-        else:
-            conviction = "A"
+# -------------------------
+# RSI position
+# -------------------------
 
-    if direction == "SHORT":
-        if not rsi_bear_ok:
-            return None
-        if htf_bias != "bearish":
-            conviction = "B"
-            reason.append("Lower TF short but 15m not aligned")
-        else:
-            conviction = "A"
+def rsi_ok(df, direction):
+    rsi = df.iloc[-1]["rsi"]
 
-    # Candle strength
-    if candle == "elephant":
-        conviction = "A+"
-        reason.append("Elephant candle confirms expansion")
-    elif candle == "tail":
-        reason.append("Tail bar rejection confirms expansion")
+    if direction == "bullish" and rsi > 50:
+        return True
+    if direction == "bearish" and rsi < 50:
+        return True
 
-    # Reason text
-    reason.insert(0, f"{setup} detected")
-    reason.append(f
+    return False
+
+
+# -------------------------
+# Main scanner
+# -------------------------
+
+def scan_markets():
+    results = []
+
+    for symbol in SYMBOLS:
+        for tf in TIMEFRAMES:
+            try:
+                df = fetch_ohlcv(symbol, tf, limit=150)
+                df = add_indicators(df)
+
+                last = df.iloc[-1]
+                candle_type = classify_candle(last)
+
+                reason = []
+                conviction = "WAIT"
+
+                htf_bias = higher_tf_bias(symbol)
+
+                # -------- SQZ logic --------
+                sqz = is_squeeze(df)
+                expansion = expansion_direction(df)
+k
+                if sqz and expansion:
+                    reason.append("SQZ occurred and expansion started")
+
+                    if candle_type in ["elephant", "tail"]:
+                        reason.append(f"{candle_type} candle confirms expansion")
+
+                        if rsi_ok(df, expansion):
+                            reason.append("RSI aligned")
+
+                            if htf_bias == expansion:
+                                conviction = "A+"
+                                reason.append("Higher timeframe bias aligned")
+                            elif htf_bias == "neutral":
+                                conviction = "A"
+                                reason.append("Higher timeframe neutral")
+                            else:
+                                conviction = "B"
+                                reason.append("Against higher timeframe")
+
+                # -------- Crossover logic --------
+                cross = sma_crossover(df)
+
+                if cross:
+                    reason.append("SMA crossover detected")
+
+                    if candle_type in ["elephant", "tail"]:
+                        reason.append(f"{candle_type} candle confirms move")
+
+                        if rsi_ok(df, cross):
+                            reason.append("RSI aligned")
+
+                            if htf_bias == cross:
+                                conviction = max(conviction, "A")
+                                reason.append("Higher timeframe bias aligned")
+                            else:
+                                conviction = max(conviction, "B")
+                                reason.append("HTF not aligned")
+
+                if conviction != "WAIT":
+                    results.append({
+                        "Symbol": symbol,
+                        "Timeframe": tf,
+                        "Direction": expansion or cross,
+                        "Conviction": conviction,
+                        "Reason": " | ".join(reason)
+                    })
+
+            except Exception as e:
+                print(f"Error scanning {symbol} {tf}: {e}")
+
+    return pd.DataFrame(results)
